@@ -707,7 +707,7 @@ ingress-nginx-controller-admission   ClusterIP   10.106.226.56   <none>        4
 # 通过浏览器访问 http://www.demo.io:32638，如下图所示，可以正常工作 
 ```
 
-![image-20220607220635913](/Users/chenjunkai/Documents/redhat/openshift-book/kubernetes/k8s-install-1.22.assets/image-20220607220635913.png)
+![image-20220607220635913](./k8s-install-1.22.assets/image-20220607220635913.png)
 
 
 
