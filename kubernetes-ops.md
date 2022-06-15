@@ -23,7 +23,7 @@ curl <svc-ip>
 ## 节点不可调度
 
 ```
-kubectl cordon node worker1.myk8s.example.com
+kubectl cordon worker1.myk8s.example.com
 
 kubectl uncordon worker1.myk8s.example.com
 ```
@@ -204,7 +204,7 @@ kubectl edit deploy/demo
 按照以下格式修改
 ...
       tolerations:
-      - effect: NoSchedule
+      - effect: NoExecute
         key: key1
         operator: Exists
 ...

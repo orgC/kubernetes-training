@@ -79,7 +79,7 @@ nmcli con mod ens160 ipv4.dns "192.168.26.2"
 nmcli con up ens160
 
 cat <<EOF>> /etc/hosts
-192.168.26.137 master1.myk8s.example.com
+192.168.26.147 master1.myk8s.example.com
 192.168.26.145 worker1.myk8s.example.com
 192.168.26.146 worker2.myk8s.example.com
 EOF
@@ -153,7 +153,7 @@ lsmod | grep br_netfilter
 
 
 # 使用本地镜像
-scp -r root@192.168.26.100:/var/www/html/repos .
+scp -r root@192.168.26.100:/var/www/html/install.tar.gz .
 
 kubeadm init --kubernetes-version=v1.22.10 --pod-network-cidr=10.244.0.0/16 --image-repository=registry.aliyuncs.com/google_containers
 
