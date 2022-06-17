@@ -46,11 +46,11 @@ Endpoints 是一组实际服务的端点集合。一个 Endpoint 是一个可被
 
 Pod 是 Kubernetes中能够创建和部署的最小单元，是 Kubernetes 集群中的一个应用实例
 
-![service](/Users/chenjunkai/work/kubernetes-training/day3-kubernetes-ops-part1.assets/service1.png)
+![service](./day3-kubernetes-ops-part1.assets/service1.png)
 
 
 
-![service](/Users/chenjunkai/work/kubernetes-training/day3-kubernetes-ops-part1.assets/service2.png)
+![service](./day3-kubernetes-ops-part1.assets/service2.png)
 
 
 
@@ -1173,7 +1173,6 @@ ConfigMap 在设计上不是用来保存大量数据的。在 ConfigMap 中保�
 
 
 # 用户，权限，RBAC
-
 
 
 
