@@ -6,6 +6,8 @@ kubeadm 生成的token TTL 默认为24小时， 可以通过参数设置
 
 --ttl duration             The duration before the token is automatically deleted (e.g. 1s, 2m, 3h). If set to '0', the token will never expire (default 24h0m0s)
 
+在24小时候如果需要继续添加节点，可以参考以下命令添加 
+
 ```
 # 查看token
 [root@master1 job]# kubeadm token list
@@ -30,7 +32,7 @@ echo "kubeadm join 192.168.26.141:6443 --token $token --discovery-token-ca-cert-
 
  
 
-# service, endpoints, headless service
+# service, endpoints
 
 Service: 将运行在一组 Pod上的应用程序公开为网络服务的抽象方法。
 
@@ -126,7 +128,7 @@ Pod 阶段的数量和含义是严格定义的。 除了本文档中列举的内
 
 | 取值                | 描述                                                         |
 | :------------------ | :----------------------------------------------------------- |
-| `Pending`（悬决）   | Pod 已被 Kubernetes 系统接受，但有一个或者多个容器尚未创建亦未运行。此阶段包括等待 Pod 被调度的时间和通过网络下载镜像的时间。 |
+| `Pending`（悬决）   | Pod 已被 Kubernetes 系统接受，但有一个或者多个容器尚未创建亦未运行。此阶段包括等待 Pod 被调度的时间和通过网络下载镜像的时间。通常集群的资源不满足需求也会出现Pending |
 | `Running`（运行中） | Pod 已经绑定到了某个节点，Pod 中所有的容器都已被创建。至少有一个容器仍在运行，或者正处于启动或重启状态。 |
 | `Succeeded`（成功） | Pod 中的所有容器都已成功终止，并且不会再重启。               |
 | `Failed`（失败）    | Pod 中的所有容器都已终止，并且至少有一个容器是因为失败终止。也就是说，容器以非 0 状态退出或者被系统终止。 |
@@ -151,10 +153,6 @@ Kubernetes 会跟踪 Pod 中每个容器的状态，就像它跟踪 Pod 总体�
 **Terminating**:  处于 `Terminated` 状态的容器已经开始执行并且或者正常结束或者因为某些原因失败。 如果你使用 `kubectl` 来查询包含 `Terminated` 状态的容器的 Pod 时，你会看到 容器进入此状态的原因、退出代码以及容器执行期间的起止时间。
 
 如果容器配置了 `preStop` 回调，则该回调会在容器进入 `Terminated` 状态之前执行。
-
-
-
-
 
 
 
@@ -1125,7 +1123,7 @@ EOF
 
 
 
-## QoS Class
+## Pod 资源限制
 
 
 
@@ -1142,31 +1140,936 @@ EOF
 
 
 
+### CPU 资源单位 
+
+CPU 资源的约束和请求以 “cpu” 为单位。 在 Kubernetes 中，一个 CPU 等于**1 个物理 CPU 核** 或者 **一个虚拟核**， 取决于节点是一台物理主机还是运行在某物理主机上的虚拟机。
+
+你也可以表达带小数 CPU 的请求。 当你定义一个容器，将其 `spec.containers[].resources.requests.cpu` 设置为 0.5 时， 你所请求的 CPU 是你请求 `1.0` CPU 时的一半。 对于 CPU 资源单位，[数量](https://kubernetes.io/docs/reference/kubernetes-api/common-definitions/quantity/) 表达式 `0.1` 等价于表达式 `100m`，可以看作 “100 millicpu”。 有些人说成是“一百毫核”，其实说的是同样的事情。
+
+CPU 资源总是设置为资源的绝对数量而非相对数量值。 例如，无论容器运行在单核、双核或者 48-核的机器上，`500m` CPU 表示的是大约相同的计算能力。
+
+
+
+### 内存资源单位 
+
+`memory` 的约束和请求以字节为单位。 你可以使用普通的证书，或者带有以下 [数量](https://kubernetes.io/docs/reference/kubernetes-api/common-definitions/quantity/)后缀 的定点数字来表示内存：E、P、T、G、M、k。 你也可以使用对应的 2 的幂数：Ei、Pi、Ti、Gi、Mi、Ki。 例如，以下表达式所代表的是大致相同的值：
+
+```
+128974848、129e6、129M、128974848000m、123Mi
+```
+
+请注意后缀的大小写。如果你请求 `400m` 内存，实际上请求的是 0.4 字节。 如果有人这样设定资源请求或限制，可能他的实际想法是申请 400 兆字节（`400Mi`） 或者 400M 字节
+
+
+
+demo 
+
+```
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: pod-resource
+  name: pod-resource
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-resource
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: pod-resource
+    spec:
+      containers:
+      - image: quay.io/junkai/demo:1.0
+        name: demo
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+status: {}
+EOF
+
+## 
+此时分别执行以下命令，查看node节点的状态
+kubectl describe node worker1.myk8s.example.com
+kubectl describe node worker2.myk8s.example.com
+kubectl describe node worker3.myk8s.example.com
+
+## 扩容pod 副本数，然后再执行describe 命令 查看 
+kubectl scale --replicas=3 deploy/pod-resource
+
+```
+
+
+
+
+
+## QoS 类 
+
+Kubernetes 创建 Pod 时就给它指定了下列一种 QoS 类：
+
+- Guaranteed
+- Burstable
+- BestEffort
+
+### Guaranteed 
+
+- Pod 中的每个容器都必须指定内存限制和内存请求。
+- 对于 Pod 中的每个容器，内存限制必须等于内存请求。
+- Pod 中的每个容器都必须指定 CPU 限制和 CPU 请求。
+- 对于 Pod 中的每个容器，CPU 限制必须等于 CPU 请求。
+
+```
+# 部署 Guaranteed pod
+
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: pod-guaranteed
+  name: pod-guaranteed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-guaranteed
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: pod-guaranteed
+    spec:
+      containers:
+      - image: quay.io/junkai/demo:1.0
+        name: demo
+        resources:
+          requests:
+            memory: "200Mi"
+            cpu: "250m"
+          limits:
+            memory: "200Mi"
+            cpu: "250m"
+status: {}
+EOF
+
+### 通过 kubectl describe 查看 相关信息
+kubectl describe pod pod-guaranteed
+
+```
+
+
+
+### Burstable
+
+- Pod 不符合 Guaranteed QoS 类的标准。
+- Pod 中至少一个容器具有内存或 CPU 的请求或限制。
+
+```
+
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: pod-burstable
+  name: pod-burstable
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-burstable
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: pod-burstable
+    spec:
+      containers:
+      - image: quay.io/junkai/demo:1.0
+        name: demo
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+status: {}
+EOF
+
+```
+
+
+
+### BestEffort
+
+对于 QoS 类为 BestEffort 的 Pod，Pod 中的容器必须没有设置内存和 CPU 限制或请求。
+
+```
+kubectl create deployment pod-besteffort --image quay.io/junkai/demo:1.0
+
+```
+
+
+
+demo
+
+```
+
+# 将pod数量扩展到25个，此时由于资源问题，已经无法继续部署pod，有一部分pod处于pending状态
+kubectl scale --replicas=25 deploy/pod-guaranteed
+
+# 扩容pod-besteffort， 此时 pod-besteffort 还可以继续扩容
+kubectl scale --replicas=10 deploy/pod-besteffort 
+
+# 查看结果 
+[root@master1 ~]# kubectl get deploy
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+pod-besteffort   10/10   10           10          20m
+pod-burstable    1/1     1            1           22m
+pod-guaranteed   22/25   25           22          27m
+```
+
 
 
 ## Quota
 
 
 
+### 为命名空间配置内存和 CPU 配额
+
+- 在该命名空间中的每个 Pod 的所有容器都必须要有内存请求和限制，以及 CPU 请求和限制。
+- 在该命名空间中所有 Pod 的内存请求总和不能超过 1 GiB。
+- 在该命名空间中所有 Pod 的内存限制总和不能超过 2 GiB。
+- 在该命名空间中所有 Pod 的 CPU 请求总和不能超过 1 cpu。
+- 在该命名空间中所有 Pod 的 CPU 限制总和不能超过 2 cpu。
+
+
+
+Demo1 :  pod 设置了litmit和request 
+
+```
+kubectl create ns quota-mem-cpu-example
+
+# 添加quota 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mem-cpu-demo
+  namespace: quota-mem-cpu-example
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+EOF
+
+
+# 创建测试pod
+
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: pod-burstable
+  name: pod-burstable
+  namespace: quota-mem-cpu-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-burstable
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: pod-burstable
+    spec:
+      containers:
+      - image: quay.io/junkai/demo:1.0
+        name: demo
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+status: {}
+EOF
+
+# 扩容 pod， 
+kubectl scale --replicas=6 deploy/pod-burstable -n quota-mem-cpu-example
+
+# 查看pod ，可以看到没有达到期望的6个 
+[root@master1 ~]# kubectl -n quota-mem-cpu-example get pod
+NAME                             READY   STATUS    RESTARTS   AGE
+pod-burstable-6dfcfd576d-fs5gl   1/1     Running   0          7s
+pod-burstable-6dfcfd576d-htmpw   1/1     Running   0          7s
+pod-burstable-6dfcfd576d-jzfd4   1/1     Running   0          7s
+pod-burstable-6dfcfd576d-vdjmd   1/1     Running   0          63s
+
+
+# 从下面的event可以看到pod由于收到quota限制，无法继续增加 
+[root@master1 ~]# kubectl -n quota-mem-cpu-example get ev
+LAST SEEN   TYPE      REASON              OBJECT                                MESSAGE
+... 
+11s         Warning   FailedCreate        replicaset/pod-burstable-6dfcfd576d   Error creating: pods "pod-burstable-6dfcfd576d-8qcg6" is forbidden: exceeded quota: mem-cpu-demo, requested: limits.cpu=500m,requests.cpu=250m, used: limits.cpu=2,requests.cpu=1, limited: limits.cpu=2,requests.cpu=1
+11s         Warning   FailedCreate        replicaset/pod-burstable-6dfcfd576d   Error creating: pods "pod-burstable-6dfcfd576d-9vsc8" is forbidden: exceeded quota: mem-cpu-demo, requested: limits.cpu=500m,requests.cpu=250m, used: limits.cpu=2,requests.cpu=1, limited: limits.cpu=2,requests.cpu=1
+9s          Warning   FailedCreate        replicaset/pod-burstable-6dfcfd576d   (combined from similar events): Error creating: pods "pod-burstable-6dfcfd576d-f6snq" is forbidden: exceeded quota: mem-cpu-demo, requested: limits.cpu=500m,requests.cpu=250m, used: limits.cpu=2,requests.cpu=1, limited: limits.cpu=2,requests.cpu=1
+
+
+# 查看quota，quota已满 
+[root@master1 ~]# kubectl get resourcequotas -n quota-mem-cpu-example
+NAME           AGE     REQUEST                                         LIMIT
+mem-cpu-demo   8m33s   requests.cpu: 1/1, requests.memory: 400Mi/1Gi   limits.cpu: 2/2, limits.memory: 512Mi/2Gi
+```
+
+
+
+demo2 ： pod 没有litmit和request 
+
+```
+# 在 quota-mem-cpu-example 中创建一个没有request 和 limit 的pod 
+kubectl create deployment pod-besteffort --image quay.io/junkai/demo:1.0 -n quota-mem-cpu-example
+
+# 查看pod状态，发现pod没有被创建 
+[root@master1 ~]# kubectl -n quota-mem-cpu-example get deploy
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+pod-besteffort   0/1     0            0           2m55s
+
+
+# 查看event， 在event 中，可以看到，必须有 request 和 limit 才行 
+
+[root@master1 ~]# kubectl -n quota-mem-cpu-example get ev
+LAST SEEN   TYPE      REASON              OBJECT                                 MESSAGE
+3m38s       Warning   FailedCreate        replicaset/pod-besteffort-7669dd9d6c   Error creating: pods "pod-besteffort-7669dd9d6c-fbb9w" is forbidden: failed quota: mem-cpu-demo: must specify limits.cpu,limits.memory,requests.cpu,requests.memory
+3m38s       Warning   FailedCreate        replicaset/pod-besteffort-7669dd9d6c   Error creating: pods "pod-besteffort-7669dd9d6c-r8zjz" is forbidden: failed quota: mem-cpu-demo: must specify limits.cpu,limits.memory,requests.cpu,requests.memory
+... 
+```
+
+
+
+Demo3：  pod 设置了request，没有设置limit 
+
+```
+
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: pod-request
+  name: pod-request
+  namespace: quota-mem-cpu-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-request
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: pod-request
+    spec:
+      containers:
+      - image: quay.io/junkai/demo:1.0
+        name: demo
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "250m"
+status: {}
+EOF
+
+# 查看pod， 此时pod 没有正常运行 
+
+[root@master1 ~]# kubectl -n quota-mem-cpu-example  get deploy
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+pod-besteffort   0/1     0            0           9m9s
+pod-request      0/1     0            0           107s
+```
 
 
 
 
-# 配置
 
-## configmap
+demo： pod 设置 litmit 没有设置request 
+
+```
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: pod-limit
+  name: pod-limit
+  namespace: quota-mem-cpu-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-limit
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: pod-limit
+    spec:
+      containers:
+      - image: quay.io/junkai/demo:1.0
+        name: demo
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+status: {}
+EOF
+
+## 查看 pod， pod 正常部署 
+[root@master1 ~]# kubectl -n quota-mem-cpu-example get deploy
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+pod-besteffort   0/1     0            0           11m
+pod-limit        1/1     1            1           14s
+pod-request      0/1     0            0           3m59s
+
+# 查看quota， 由于没有设置request， request = limit 
+[root@master1 ~]# kubectl get resourcequotas -n quota-mem-cpu-example
+NAME           AGE   REQUEST                                            LIMIT
+mem-cpu-demo   23m   requests.cpu: 500m/1, requests.memory: 128Mi/1Gi   limits.cpu: 500m/2, limits.memory: 128Mi/2Gi
+```
 
 
 
-ConfigMap 是一种 API 对象，用来将非机密性的数据保存到键值对中。使用时， [Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/) 可以将其用作环境变量、命令行参数或者存储卷中的配置文件。
 
-ConfigMap 将你的环境配置信息和 [容器镜像](https://kubernetes.io/zh-cn/docs/reference/glossary/?all=true#term-image) 解耦，便于应用配置的修改
 
-ConfigMap 在设计上不是用来保存大量数据的。在 ConfigMap 中保存的数据不可超过 1 MiB。如果你需要保存超出此尺寸限制的数据，你可能希望考虑挂载存储卷 或者使用独立的数据库或者文件服务
+### 为命名空间设置 pod 配额
 
 
 
+```
+kubectl create ns quota-pod-example
 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: pod-demo
+  namespace: quota-pod-example
+spec:
+  hard:
+    pods: "2"
+EOF
+
+
+# 在指定namespace 创建deployment 
+[root@master1 ~]# kubectl create deployment pod-quota --image quay.io/junkai/demo:1.0 -n quota-pod-example
+deployment.apps/pod-quota created
+[root@master1 ~]# kubectl -n quota-pod-example get pod
+NAME                         READY   STATUS    RESTARTS   AGE
+pod-quota-5f5f9b9fff-5zvq4   1/1     Running   0          6s
+
+# 扩容pod 数量 
+[root@master1 ~]# kubectl -n quota-pod-example scale --replicas=3 deploy/pod-quota
+deployment.apps/pod-quota scaled
+
+# 查看实际pod 数量  
+[root@master1 ~]# kubectl -n quota-pod-example get pod
+NAME                         READY   STATUS    RESTARTS   AGE
+pod-quota-5f5f9b9fff-5cht8   1/1     Running   0          7s
+pod-quota-5f5f9b9fff-5zvq4   1/1     Running   0          49s
+[root@master1 ~]# kubectl -n quota-pod-example get deploy
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE
+pod-quota   2/3     2            2           52s
+[root@master1 ~]# kubectl -n quota-pod-example get resourcequotas
+NAME       AGE    REQUEST     LIMIT
+pod-demo   3m2s   pods: 2/2
+
+###### 测试删除规则后，扩容pod，然后重新添加quota后会不会删除pod
+
+kubectl -n quota-pod-example delete resourcequotas pod-demo
+
+# 扩容pod 数量到3个后，重新添加quota 规则， 然后再查看quota 情况 
+
+[root@master1 ~]# kubectl -n quota-pod-example get resourcequotas
+NAME       AGE   REQUEST     LIMIT
+pod-demo   31s   pods: 3/2
+
+
+```
+
+
+
+
+
+# configmap
+
+
+
+很多应用在其初始化或运行期间要依赖一些配置信息。大多数时候， 存在要调整配置参数所设置的数值的需求。 ConfigMap 是 Kubernetes 用来向应用 Pod 中注入配置数据的方法。
+
+ConfigMap 允许你将配置文件与镜像文件分离，以使容器化的应用程序具有可移植性
+
+
+
+## 创建configmap
+
+
+
+### 基于目录创建 ConfigMap
+
+```
+
+mkdir -p configure-pod-container/configmap/
+
+# 将示例文件下载到 `configure-pod-container/configmap/` 目录
+wget https://kubernetes.io/examples/configmap/game.properties -O configure-pod-container/configmap/game.properties
+wget https://kubernetes.io/examples/configmap/ui.properties -O configure-pod-container/configmap/ui.properties
+
+# 创建 configmap
+kubectl create configmap game-config --from-file=configure-pod-container/configmap/
+
+```
+
+
+
+### 基于文件创建 ConfigMap
+
+```
+
+kubectl create configmap game-config-2 --from-file=configure-pod-container/configmap/game.properties
+
+# 查看cm 
+kubectl describe cm game-config-2
+
+# 定义从文件创建 ConfigMap 时要使用的键， 
+
+kubectl create configmap game-config-3 --from-file=game-special-key=configure-pod-container/configmap/game.properties
+
+# 查看 cm game-config-3， 通过对比可以看到，与上边的 game-config-2相比， cm key 被设置为 game-special-key
+kubectl describe cm game-config-3
+
+
+# 基于多个文件创建configmap 
+kubectl create configmap game-config-multifile --from-file=configure-pod-container/configmap/game.properties --from-file=configure-pod-container/configmap/ui.properties
+
+
+kubectl create configmap game-config-multifile-1 --from-file=zhangsan=configure-pod-container/configmap/game.properties --from-file=configure-pod-container/configmap/ui.properties
+
+```
+
+
+
+### 根据字面值创建 ConfigMap
+
+```
+kubectl create configmap demo-config --from-literal=special.how=very --from-literal=special.type=charm
+```
+
+
+
+
+
+## configmap使用场景
+
+
+
+### 使用存储在 ConfigMap 中的数据填充卷
+
+```
+
+# 创建 configmap 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: special-config
+  namespace: default
+data:
+  SPECIAL_LEVEL: very
+  SPECIAL_TYPE: charm
+EOF
+
+# 创建pod
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cm-test-pod-file
+spec:
+  containers:
+    - name: test-container
+      image: busybox:1.28
+      command: [ "/bin/sh", "-c", "sleep 6000" ]
+      volumeMounts:
+      - name: config-volume
+        mountPath: /etc/config
+  volumes:
+    - name: config-volume
+      configMap:
+        # 提供包含要添加到容器中的文件的 ConfigMap 的名称
+        name: special-config
+  restartPolicy: Never
+EOF
+
+# 进入pod，进行测试 
+kubectl exec -it cm-test-pod-file sh
+
+ls /etc/config/
+```
+
+
+
+### 将 ConfigMap 数据添加到卷中的特定路径
+
+
+
+```
+
+# 创建 configmap 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: special-config
+  namespace: default
+data:
+  SPECIAL_LEVEL: very
+  SPECIAL_TYPE: charm
+EOF
+
+#  创建 pod
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cm-test-pod-volume
+spec:
+  containers:
+    - name: test-container
+      image: busybox:1.28
+      command: [ "/bin/sh","-c","sleep 6000" ]
+      volumeMounts:
+      - name: config-volume
+        mountPath: /etc/config
+  volumes:
+    - name: config-volume
+      configMap:
+        name: special-config
+        items:
+        - key: SPECIAL_LEVEL
+          path: keys
+  restartPolicy: Never
+EOF
+
+# 登陆到pod中 查看 
+kubectl exec -it cm-test-pod-volume sh
+cat /etc/config/keys
+
+```
+
+
+
+
+
+
+
+### 将configmap 中的键值设置为 环境变量
+
+
+
+```
+
+# 创建 configmap 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: special-config
+  namespace: default
+data:
+  SPECIAL_LEVEL: very
+  SPECIAL_TYPE: charm
+EOF
+
+#  创建 pod
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dapi-test-pod
+spec:
+  containers:
+    - name: test-container
+      image: busybox:1.28
+      command: [ "/bin/sh", "-c", "sleep 6000" ]
+      envFrom:
+      - configMapRef:
+          name: special-config
+  restartPolicy: Never
+EOF
+
+# 进入pod内部，执行env 查看内容 
+kubectl exec -it dapi-test-pod sh
+
+
+```
+
+
+
+
+
+
+
+### 使用configmap 配置redis
+
+
+
+```
+
+# 创建一个configmap 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example-redis-config
+data:
+  redis-config: ""
+EOF
+
+# 部署 redis pod 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis
+spec:
+  containers:
+  - name: redis
+    image: redis:5.0.4
+    command:
+      - redis-server
+      - "/redis-master/redis.conf"
+    env:
+    - name: MASTER
+      value: "true"
+    ports:
+    - containerPort: 6379
+    resources:
+      limits:
+        cpu: "0.1"
+    volumeMounts:
+    - mountPath: /redis-master-data
+      name: data
+    - mountPath: /redis-master
+      name: config
+  volumes:
+    - name: data
+      emptyDir: {}
+    - name: config
+      configMap:
+        name: example-redis-config
+        items:
+        - key: redis-config
+          path: redis.conf
+EOF
+
+# 登陆到redis pod中，查看 redis 配置
+
+kubectl exec -it redis -- redis-cli
+127.0.0.1:6379> CONFIG GET maxmemory
+127.0.0.1:6379> CONFIG GET maxmemory-policy
+
+
+# 修改configmap 的配置
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example-redis-config
+data:
+  redis-config: |
+    maxmemory 2mb
+    maxmemory-policy allkeys-lru
+EOF
+
+# 删除， 重新创建 redis pod
+kubectl delete pod redis
+
+
+# 登陆到redis pod中，查看 redis 配置，此时redis 配置与上边配置文件中内容一致
+kubectl exec -it redis -- redis-cli
+127.0.0.1:6379> CONFIG GET maxmemory
+127.0.0.1:6379> CONFIG GET maxmemory-policy
+
+
+```
+
+
+
+# Secret
+
+Secret 类似于 ConfigMap 但专门用于保存机密数据
+
+
+
+Pod 可以用三种方式之一来使用 Secret：
+
+* 作为挂载到一个或多个容器上的卷 中的文件。
+* 作为容器的环境变量。
+* 由 kubelet 在为 Pod 拉取镜像时使用。
+
+
+
+## 创建secret
+
+### 直接创建secret 
+
+```
+
+echo -n 'admin' > ./username.txt
+echo -n '1f2d1e2e67df' > ./password.txt
+
+# 基于文件直接创建secret 
+kubectl create secret generic db-user-pass   --from-file=./username.txt   --from-file=./password.txt
+
+# 基于文件创建自定义key的secret 
+kubectl create secret generic db-user-pass-2   --from-file=username=./username.txt   --from-file=password=./password.txt
+
+# 查看 解码 secret 
+kubectl get secrets db-user-pass-2 -o jsonpath='{.data.password}' | base64 -d
+
+# 通过字符创建
+kubectl create secret generic db-user-pass-1 \
+  --from-literal=username=devuser \
+  --from-literal=password='S!B\*d$zDsb='
+
+# 查看secret 
+kubectl get secrets db-user-pass-1 -o jsonpath='{.data.password}' | base64 -d
+```
+
+
+
+### 使用文件创建secret 
+
+```
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysecret
+type: Opaque
+stringData:
+  config.yaml: |
+    apiUrl: "https://my.api.com/api/v1"
+    username: zhangsan
+    password: zhangsanpasswd   
+EOF
+
+# 此时 整一个 config.yaml 文件被作为一个整体进行base64, 可以通过base64 命令打开查看内容
+
+```
+
+
+
+## 使用 secret 
+
+### 在 Pod 中以文件形式使用 Secret
+
+```
+kubectl create secret generic mysecret \
+  --from-literal=username=devuser \
+  --from-literal=password='S!B\*d$zDsb='
+  
+
+# 创建pod 
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+  - name: mypod
+    image: redis
+    volumeMounts:
+    - name: foo
+      mountPath: "/etc/foo"
+      readOnly: true
+  volumes:
+  - name: foo
+    secret:
+      secretName: mysecret
+      optional: false
+EOF
+
+# 登陆到 pod 上查看, 可以看到，生成两个文件 
+
+
+```
+
+
+
+
+
+
+
+## secret type
+
+
+
+| 内置类型                              | 用法                                     |
+| ------------------------------------- | ---------------------------------------- |
+| `Opaque`                              | 用户定义的任意数据                       |
+| `kubernetes.io/service-account-token` | 服务账号令牌                             |
+| `kubernetes.io/dockercfg`             | `~/.dockercfg` 文件的序列化形式          |
+| `kubernetes.io/dockerconfigjson`      | `~/.docker/config.json` 文件的序列化形式 |
+| `kubernetes.io/basic-auth`            | 用于基本身份认证的凭据                   |
+| `kubernetes.io/ssh-auth`              | 用于 SSH 身份认证的凭据                  |
+| `kubernetes.io/tls`                   | 用于 TLS 客户端或者服务器端的数据        |
+| `bootstrap.kubernetes.io/token`       | 启动引导令牌数据                         |
+
+
+
+## secret 设置为不可变
+
+可以通过将 Secret 的 `immutable` 字段设置为 `true` 创建不可更改的 Secret。 一旦一个 Secret 或 ConfigMap 被标记为不可更改，撤销此操作或者更改 data 字段的内容都是不可能的。 只能删除并重新创建这个 Secret
+
+```
+apiVersion: v1
+kind: Secret
+metadata:
+  ...
+data:
+  ...
+immutable: true
+
+```
 
 
 

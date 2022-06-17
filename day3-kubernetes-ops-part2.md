@@ -695,10 +695,6 @@ cronjob.batch "hello" deleted
 
 
 
-# quota
-
-
-
 # 扩展Kubernetes API 
 
 *定制资源（Custom Resource）* 是对 Kubernetes API 的扩展， 
