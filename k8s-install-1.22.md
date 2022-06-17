@@ -452,6 +452,124 @@ for each in `ls *.tar`; do docker load -i $each; done
 
 ```
 
+### worker3
+
+```
+hostnamectl set-hostname worker3.myk8s.example.com
+
+nmcli con mod ens160 ipv4.addresses 192.168.26.144/24
+nmcli con mod ens160 ipv4.gateway 192.168.26.2
+nmcli con mod ens160 ipv4.method manual
+nmcli con mod ens160 ipv4.dns "192.168.26.2"
+nmcli con up ens160
+
+cat <<EOF>> /etc/hosts
+192.168.26.100 utils.myk8s.example.com
+192.168.26.141 master1.myk8s.example.com
+192.168.26.142 worker1.myk8s.example.com
+192.168.26.143 worker2.myk8s.example.com
+192.168.26.144 worker3.myk8s.example.com
+EOF
+
+swapoff  -a
+sed -i '/swap/d' /etc/fstab
+
+setenforce 0
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+
+modprobe overlay
+modprobe br_netfilter
+
+tee /etc/sysctl.d/k8s.conf<<EOF
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+sysctl --system
+
+
+# 安装 docker-ce 
+
+dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+yum install -y docker-ce 
+
+systemctl enable --now docker 
+
+# 修改 docker-ce cgroup driver  
+
+cat <<EOF | sudo tee /etc/docker/daemon.json
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+EOF
+
+systemctl daemon-reload
+systemctl restart docker
+
+
+
+# 计算节点
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --reload
+
+
+# 使用阿里云的资源 
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+EOF
+
+#  安装 k8s 1.22 版本 
+
+yum --showduplicates list kubeadm
+
+version=1.22.10-0
+yum install -y kubelet-${version}  kubeadm-${version} 
+
+systemctl enable --now kubelet
+
+
+# load image 
+
+scp -r root@192.168.26.100:/var/www/html/repos/images .
+cd images 
+for each in `ls *.tar`; do docker load -i $each; done
+
+
+```
+
+### 24小时之后添加节点
+
+默认情况下，token只有24小时，如果超过24小时之后添加节点，需要生成新的token
+
+```
+# 在master节点行执行
+
+# 生成新的token
+token=`kubeadm token create`
+
+# 生成新的hash 
+hash=`openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'`
+
+# 最终生成新的join命令
+echo "kubeadm join 192.168.26.141:6443 --token $token --discovery-token-ca-cert-hash sha256:$hash"
+
+# 在新的计算节点上执行 kubeadm join 命令
+
+```
+
 
 
 
@@ -489,10 +607,18 @@ spec:
       natOutgoing: Enabled
       nodeSelector: all()
 
-
 #  kubectl apply -f custom-resources.yaml
 
-# 在所有节点上关闭防火墙 
+# 配置防火墙
+firewall-cmd --permanent --add-port=179/tcp
+firewall-cmd --permanent --add-port=4789/udp
+firewall-cmd --permanent --add-port=5473/tcp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=9099/udp
+
+firewall-cmd --reload
+
+# 在所有节点上关闭防火墙， 如果不开启防火墙端口的话，那么就关闭防火墙，这个最简单
 systemctl stop firewalld
 ```
 
@@ -518,6 +644,58 @@ for each in `ls *.tar` ; do  docker load -i $each; done
 ```
 
 
+
+# 配置使用IPVS （可选）
+
+kube-proxy默认使用iptable，可以选择使用IPVS 
+
+## 加载内核模块
+
+```
+[root@master1-k8s calico]# lsmod|grep ip_vs
+ip_vs_sh               16384  0
+ip_vs_wrr              16384  0
+ip_vs_rr               16384  7
+ip_vs                 172032  13 ip_vs_rr,ip_vs_sh,ip_vs_wrr
+nf_conntrack          172032  8 xt_conntrack,nf_nat,nft_ct,ip6t_MASQUERADE,ipt_MASQUERADE,xt_nat,nf_conntrack_netlink,ip_vs
+nf_defrag_ipv6         20480  2 nf_conntrack,ip_vs
+libcrc32c              16384  5 nf_conntrack,nf_nat,nf_tables,xfs,ip_vs
+
+
+# 安装工具
+yum install ipvsadm ipset -y
+```
+
+
+
+## 修改kube-proxy 配置
+
+```
+kubectl edit configmap kube-proxy -n kube-system
+
+     42     kind: KubeProxyConfiguration
+     43     metricsBindAddress: ""
+     44     mode: "ipvs"                     # 修改这一行
+     45     nodePortAddresses: null
+     46     oomScoreAdj: null
+     47     portRange: ""
+     48     showHiddenMetricsForVersion: ""
+```
+
+
+
+## 删除kube-proxy pod 
+
+
+
+```
+
+# 删除所有的kube-proxy 
+kubectl -n kube-system delete pod -l k8s-app=kube-proxy
+
+# 查看ipvs 规则
+ipvsadm -ln
+```
 
 
 
