@@ -6,7 +6,7 @@ kubeadm 生成的token TTL 默认为24小时， 可以通过参数设置
 
 --ttl duration             The duration before the token is automatically deleted (e.g. 1s, 2m, 3h). If set to '0', the token will never expire (default 24h0m0s)
 
-在24小时候如果需要继续添加节点，可以参考以下命令添加 
+在24小时后如果需要继续添加节点，可以参考以下命令添加 
 
 ```
 # 查看token
@@ -36,7 +36,7 @@ echo "kubeadm join 192.168.26.141:6443 --token $token --discovery-token-ca-cert-
 
 Service: 将运行在一组 Pod上的应用程序公开为网络服务的抽象方法。
 
-使用 Kubernetes，你无需修改应用程序即可使用不熟悉的服务发现机制。 Kubernetes 为 Pods 提供自己的 IP 地址，并为一组 Pod 提供相同的 DNS 名， 并且可以在它们之间进行负载均衡。
+使用 Kubernetes，你无需修改应用程序即可使用服务发现机制。 Kubernetes 为 Pods 提供自己的 IP 地址，并为一组 Pod 提供相同的 DNS 名， 并且可以在它们之间进行负载均衡。
 
 ---
 
@@ -162,13 +162,14 @@ Kubernetes 会跟踪 Pod 中每个容器的状态，就像它跟踪 Pod 总体�
 
 如果 Pod 中的容器之一定义了 `preStop` [回调](https://kubernetes.io/zh/docs/concepts/containers/container-lifecycle-hooks)， `kubelet` 开始在容器内运行该回调逻辑。如果超出体面终止限期时，`preStop` 回调逻辑 仍在运行，`kubelet` 会请求给予该 Pod 的宽限期一次性增加 2 秒钟
 
-preStop 最长等待时间为 30s，
+preStop 最长等待时间为 30s
 
 
 
 通常情况下，容器运行时会发送一个 TERM 信号到每个容器中的主进程。 很多容器运行时都能够注意到容器镜像中 `STOPSIGNAL` 的值，并发送该信号而不是 TERM
 
 ```
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -229,8 +230,6 @@ Hello from the postStart handler
 7. 结果说明： 执行 kubectl delete pod xxx 之后，pod 会收到 STOPSIGNAL 信号，此时preStop 会被调用，同时service中的iptable规则会重写，导致旧的pod不会收到流量， 这个场景适用于优雅终止
 
 ```
-
-
 
 
 
@@ -351,10 +350,6 @@ two-containers           1/2     NotReady    0              58m    10.244.30.94 
 Hello from the debian container
 
 ```
-
-
-
-
 
 
 
@@ -878,7 +873,7 @@ Liveness:       exec [cat /tmp/healthy] delay=5s timeout=1s period=5s #success=1
 
 delay=5s 表示容器启动5s后开始探测
 timeout=1s 表示容器必须在1s内做出相应反馈给probe，否则视为探测失败
-period=5s 表示每10s探测一次
+period=5s 表示每5s探测一次
 #success=1 表示探测连续1次成功表示成功
 #failure=3 表示探测连续3次失败后会重启容器
 
@@ -960,6 +955,27 @@ spec:
     livenessProbe:
       tcpSocket:
         port: 8080
+      initialDelaySeconds: 15
+      periodSeconds: 20
+EOF
+
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: goproxy2
+  labels:
+    app: goproxy2
+spec:
+  containers:
+  - name: goproxy
+    image: quay.io/junkai/training:goproxy-liveness
+    ports:
+    - containerPort: 8080
+    livenessProbe:
+      tcpSocket:
+        port: 8081
       initialDelaySeconds: 15
       periodSeconds: 20
 EOF
@@ -1098,9 +1114,9 @@ spec:
       httpGet:
         path: /healthz
         port: 8080
-      initialDelaySeconds: 10
+      initialDelaySeconds: 50
       failureThreshold: 30
-      periodSeconds: 10
+      periodSeconds: 2
 EOF
 ```
 
@@ -1257,10 +1273,10 @@ spec:
         resources:
           requests:
             memory: "200Mi"
-            cpu: "250m"
+            cpu: "100m"
           limits:
             memory: "200Mi"
-            cpu: "250m"
+            cpu: "100m"
 status: {}
 EOF
 
@@ -1303,10 +1319,10 @@ spec:
         name: demo
         resources:
           requests:
-            memory: "100Mi"
-            cpu: "250m"
+            memory: "200Mi"
+            cpu: "100m"
           limits:
-            memory: "128Mi"
+            memory: "500Mi"
             cpu: "500m"
 status: {}
 EOF
@@ -1636,7 +1652,7 @@ ConfigMap 允许你将配置文件与镜像文件分离，以使容器化的应�
 
 
 
-## 创建configmap
+## 创建 configmap
 
 
 
@@ -2035,10 +2051,6 @@ EOF
 
 
 
-
-
-
-
 ## secret type
 
 
@@ -2072,10 +2084,6 @@ immutable: true
 ```
 
 
-
-
-
-# 用户，权限，RBAC
 
 
 
